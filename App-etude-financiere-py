@@ -1,0 +1,207 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+
+# Configuration de la page
+st.set_page_config(
+    page_title="Simulateur Financier - École de Formation",
+    page_icon="🎓",
+    layout="wide"
+)
+
+st.title("🎓 Simulateur d'Étude Financière - Projet d'École de Formation")
+st.markdown("---")
+
+# ----------------- SIDEBAR : PARAMÈTRES ET HYPOTHÈSES -----------------
+st.sidebar.header("⚙️ Hypothèses Générales")
+
+# 1. Investissements initiaux
+st.sidebar.subheader("1. Investissement & Financement")
+cout_construction = st.sidebar.number_input("Construction / Aménagement (DA)", value=15000000, step=1000000)
+cout_equipement = st.sidebar.number_input("Équipements & Matériels (DA)", value=8000000, step=500000)
+frais_etude = st.sidebar.number_input("Frais préliminaires & Contrats (DA)", value=1500000, step=100000)
+
+total_investissement = cout_construction + cout_equipement + frais_etude
+
+apport_pc = st.sidebar.slider("Part de l'Apport Personnel (%)", 10, 100, 30, step=5)
+apport_montant = total_investissement * (apport_pc / 100)
+credit_montant = total_investissement - apport_montant
+
+# 2. Conditions du Crédit
+st.sidebar.subheader("2. Conditions du Crédit")
+duree_credit = st.sidebar.slider("Durée du crédit (années)", 3, 10, 7)
+differe_credit = st.sidebar.slider("Différé de paiement (années)", 0, 3, 1)
+taux_interet = st.sidebar.number_input("Taux d'intérêt annuel (%)", value=5.75, step=0.25) / 100
+
+# 3. Activité & Chiffre d'Affaires
+st.sidebar.subheader("3. Hypothèses d'Activité (Année 1)")
+nb_formations = st.sidebar.number_input("Nombre de formations / sessions par an", value=50, step=5)
+tarif_moyen = st.sidebar.number_input("Tarif moyen par formation (DA)", value=120000, step=5000)
+croissance_ca = st.sidebar.slider("Taux de croissance annuel du CA (%)", 0, 50, 15, step=5) / 100
+
+# 4. Charges d'Exploitation
+st.sidebar.subheader("4. Charges Annuelles Initiales")
+frais_loyer = st.sidebar.number_input("Loyer annuel (DA)", value=3600000, step=100000)
+charges_personnel = st.sidebar.number_input("Masse salariale annuelle globale (DA)", value=6000000, step=500000)
+autres_consom = st.sidebar.number_input("Autres charges & Fournitures (DA)", value=1500000, step=100000)
+croissance_charges = st.sidebar.slider("Inflation annuelle des charges (%)", 0, 10, 5, step=1) / 100
+
+# 5. Taux d'Actualisation
+taux_actualisation = st.sidebar.number_input("Taux d'actualisation pour la VAN (%)", value=8.0, step=0.5) / 100
+
+
+# ----------------- CALCULS DES DONNÉES FINANCIÈRES -----------------
+
+annees = [f"Année {i}" for i in range(1, 6)]
+
+# A. Chiffre d'Affaires prévisionnel sur 5 ans
+ca_an_1 = nb_formations * tarif_moyen
+ca_prev = []
+current_ca = ca_an_1
+for i in range(5):
+    ca_prev.append(round(current_ca, 2))
+    current_ca *= (1 + croissance_ca)
+
+# B. Charges d'Exploitation sur 5 ans
+loyer_prev = [frais_loyer] * 5  # Loyer généralement fixe ou indexé différemment
+pers_prev = []
+autres_prev = []
+curr_pers = charges_personnel
+curr_autres = autres_consom
+
+for i in range(5):
+    pers_prev.append(round(curr_pers, 2))
+    autres_prev.append(round(curr_autres, 2))
+    curr_pers *= (1 + croissance_charges)
+    curr_autres *= (1 + croissance_charges)
+
+total_charges_op = [loyer_prev[i] + pers_prev[i] + autres_prev[i] for i in range(5)]
+
+# C. Amortissements (Constructions sur 25 ans, Équipements sur 5 ans)
+amort_const = cout_construction / 25
+amort_equip = cout_equipement / 5
+dotation_amort = amort_const + amort_equip
+amort_prev = [round(dotation_amort, 2)] * 5
+
+# D. Plan de Remboursement du Crédit (Amortissement linéaire du principal après différé)
+interets_prev = []
+principal_restant = credit_montant
+remboursement_annuel = credit_montant / (duree_credit - differe_credit) if duree_credit > differe_credit else 0
+
+for an in range(1, 6):
+    if an <= differe_credit:
+        # Pendant le différé, on ne paye que les intérêts sur le montant total du crédit
+        int_an = principal_restant * taux_interet
+        interets_prev.append(round(int_an, 2))
+    elif an <= duree_credit:
+        int_an = principal_restant * taux_interet
+        interets_prev.append(round(int_an, 2))
+        principal_restant -= remboursement_annuel
+    else:
+        interets_prev.append(0.0)
+
+# E. Tableau des Comptes de Résultats (TCR) et Cash-Flows
+ebitda = [ca_prev[i] - total_charges_op[i] for i in range(5)]
+ebit = [ebitda[i] - amort_prev[i] for i in range(5)]
+resultat_avant_impot = [ebit[i] - interets_prev[i] for i in range(5)]
+
+# Hypothèse d'exonération d'IBS (ex: cadre de soutien à l'investissement) ou taux standard (ex: 19% IBS)
+taux_ibs = 0.19
+impot_prev = [max(0.0, r * taux_ibs) for r in resultat_avant_impot]
+resultat_net = [resultat_avant_impot[i] - impot_prev[i] for i in range(5)]
+
+# Cash-Flows (Résultat Net + Amortissements)
+cash_flows = [resultat_net[i] + amort_prev[i] for i in range(5)]
+
+# Calcul de la VAN (Valeur Actuelle Nette)
+cash_flows_actualises = [cash_flows[i] / ((1 + taux_actualisation) ** (i + 1)) for i in range(5)]
+van = sum(cash_flows_actualises) - total_investissement
+ip = (sum(cash_flows_actualises) / total_investissement) if total_investissement > 0 else 0
+
+
+# ----------------- AFFICHAGE DE L'INTERFACE -----------------
+
+# Onglets principaux
+tab1, tab2, tab3 = st.tabs(["📊 Synthèse & Viabilité", "📈 Compte de Résultat (TCR)", "💸 Financement & Amortissements"])
+
+with tab1:
+    st.header("🎯 Indicateurs Clés de Performance")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Investissement Total", f"{total_investissement:,.2f} DA")
+    with col2:
+        st.metric("Crédit Sollicité", f"{credit_montant:,.2f} DA")
+    with col3:
+        color_van = "normal" if van > 0 else "inverse"
+        st.metric("Valeur Actuelle Nette (VAN)", f"{van:,.2f} DA", delta=f"{((van/total_investissement)*100):.1f}% de rentabilité")
+    with col4:
+        st.metric("Indice de Profitabilité (IP)", f"{ip:.2f}")
+
+    st.markdown("---")
+    
+    st.subheader("💡 Analyse de Viabilité")
+    if van > 0:
+        st.success(f"**Projet Fortement Viable !** La VAN est positive à un taux d'actualisation de {taux_actualisation*100}%. Le projet rembourse l'investissement initial et génère de la valeur nette.")
+    else:
+        st.error("**Projet Non Rentable dans ces conditions.** La VAN est négative. Essayez d'augmenter le tarif moyen, le nombre de sessions, ou de réduire les charges d'exploitation dans le menu de gauche.")
+
+    # Graphique du Chiffre d'Affaires vs Charges
+    st.subheader("📈 Évolution du Chiffre d'Affaires vs Charges Opérationnelles")
+    chart_data = pd.DataFrame({
+        "Chiffre d'Affaires": ca_prev,
+        "Charges Opérationnelles": total_charges_op
+    }, index=annees)
+    st.line_chart(chart_data)
+
+with tab2:
+    st.header("📋 Tableau des Comptes de Résultats (TCR) Prévisionnel")
+    
+    tcr_df = pd.DataFrame({
+        "Rubrique (DA)": [
+            "Chiffre d'Affaires",
+            "(-) Loyers",
+            "(-) Charges de Personnel",
+            "(-) Autres Consommations",
+            "(=) EBITDA / EBE",
+            "(-) Dotations aux Amortissements",
+            "(=) EBIT / Résultat Opérationnel",
+            "(-) Frais Financiers (Crédit)",
+            "(=) Résultat avant Impôts",
+            "(-) Impôt sur les Bénéfices (IBS)",
+            "(=) RÉSULTAT NET",
+            "(+) Réintégration des Amortissements",
+            "(=) CASH-FLOW DE L'EXERCICE"
+        ],
+        "Année 1": [ca_prev[0], loyer_prev[0], pers_prev[0], autres_prev[0], ebitda[0], amort_prev[0], ebit[0], interets_prev[0], resultat_avant_impot[0], impot_prev[0], resultat_net[0], amort_prev[0], cash_flows[0]],
+        "Année 2": [ca_prev[1], loyer_prev[1], pers_prev[1], autres_prev[1], ebitda[1], amort_prev[1], ebit[1], interets_prev[1], resultat_avant_impot[1], impot_prev[1], resultat_net[1], amort_prev[1], cash_flows[1]],
+        "Année 3": [ca_prev[2], loyer_prev[2], pers_prev[2], autres_prev[2], ebitda[2], amort_prev[2], ebit[2], interets_prev[2], resultat_avant_impot[2], impot_prev[2], resultat_net[2], amort_prev[2], cash_flows[2]],
+        "Année 4": [ca_prev[3], loyer_prev[3], pers_prev[3], autres_prev[3], ebitda[3], amort_prev[3], ebit[3], interets_prev[3], resultat_avant_impot[3], impot_prev[3], resultat_net[3], amort_prev[3], cash_flows[3]],
+        "Année 5": [ca_prev[4], loyer_prev[4], pers_prev[4], autres_prev[4], ebitda[4], amort_prev[4], ebit[4], interets_prev[4], resultat_avant_impot[4], impot_prev[4], resultat_net[4], amort_prev[4], cash_flows[4]]
+    })
+    
+    st.dataframe(tcr_df.style.format(subset=["Année 1", "Année 2", "Année 3", "Année 4", "Année 5"], formatter="{:,.2f} DA"))
+
+with tab3:
+    st.header("💰 Plan de Financement & Amortissements")
+    
+    col_left, col_right = st.columns(2)
+    
+    with col_left:
+        st.subheader("Structure de Financement Initiale")
+        fin_data = pd.DataFrame({
+            "Ressource": ["Apport Personnel", "Crédit Bancaire"],
+            "Montant (DA)": [apport_montant, credit_montant],
+            "Part (%)": [apport_pc, 100 - apport_pc]
+        })
+        st.table(fin_data.style.format({"Montant (DA)": "{:,.2f} DA"}))
+        
+    with col_right:
+        st.subheader("Amortissement Linéaire des Actifs")
+        amort_data = pd.DataFrame({
+            "Catégorie": ["Constructions / Aménagements", "Équipements & Matériels"],
+            "Valeur d'origine (DA)": [cout_construction, cout_equipement],
+            "Durée de vie (ans)": [25, 5],
+            "Dotation Annuelle (DA)": [amort_const, amort_equip]
+        })
+        st.table(amort_data.style.format({"Valeur d'origine (DA)": "{:,.2f} DA", "Dotation Annuelle (DA)": "{:,.2f} DA"}))
